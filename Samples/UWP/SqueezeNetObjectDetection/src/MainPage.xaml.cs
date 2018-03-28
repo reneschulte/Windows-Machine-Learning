@@ -315,14 +315,14 @@ namespace SqueezeNetObjectDetection
                     }
 
                     // Display the result
-                    string message = "Predominant objects detected are:";
+                    string message = "Predominant detected objects:";
                     for (int i = 0; i < TopPropsCnt; i++)
                     {
-                        message += $"\n{ _labels[topProbabilityLabelIndexes[i]]} with confidence of { topProbabilities[i]}";
+                        message += $"\n{topProbabilities[i]*100,3:f0}% : { _labels[topProbabilityLabelIndexes[i]]} ";
                     }
                     await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, async () =>
                     {
-                        Duration.Text = string.Format("{0:f1} fps", (1000 / stopwatch.ElapsedMilliseconds));
+                        Duration.Text = $"{1000 / stopwatch.ElapsedMilliseconds,4:f1} fps";
                         StatusBlock.Text = message;
                         await SpeechOutput(_labels[topProbabilityLabelIndexes[0]], topProbabilities[0]);
                     });

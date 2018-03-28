@@ -7,12 +7,12 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="12">
 
         <StackPanel>
             <StackPanel Orientation="Horizontal">
                 <Button Name="ButtonCam"
-                    ToolTipService.ToolTip="Pick and evaluate and image"
+                    ToolTipService.ToolTip="Turn on/off webcam"
                     Width="80"
                     Height="80"
                     Click="OnWebCameraButtonClicked" 
@@ -38,11 +38,10 @@
 
             <CaptureElement x:Name="WebCamCaptureElement" Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Left" MaxWidth="320" MaxHeight="240"/>
 
-            <TextBlock x:Name="Duration" Text="0 fps"/>
+            <TextBlock x:Name="Duration" Text="0 fps" FontSize="14"/>
             <TextBlock x:Name="StatusBlock" 
-                       FontWeight="Bold" 
                        TextWrapping="Wrap"  
-                       Text="Press on the webcam button to start the webcam!"/>
+                       Text="Press on the webcam button to start the webcam!" FontSize="14"/>
             <MediaElement x:Name="SpeechMediaElement" />
 
         </StackPanel>
