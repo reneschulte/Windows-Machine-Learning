@@ -318,7 +318,7 @@ namespace SqueezeNetObjectDetection
                     string message = "Predominant detected objects:";
                     for (int i = 0; i < TopPropsCnt; i++)
                     {
-                        message += $"\n{topProbabilities[i]*100,3:f0}% : { _labels[topProbabilityLabelIndexes[i]]} ";
+                        message += $"\n{topProbabilities[i]*100,5:f0}% : { _labels[topProbabilityLabelIndexes[i]]} ";
                     }
                     await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, async () =>
                     {
