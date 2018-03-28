@@ -1,8 +1,10 @@
 
-# Windows Machine Learning Samples
+# Modified Windows Machine Learning Samples
 
-This repo contains the Windows Machine Learning (WinML) samples that demonstrate how to build machine learning applications for Windows 10. 
-We also have additional information and resources available here: 
+This repo contains my modifications of the Windows Machine Learning (WinML) samples.
+For example the SqueezeNet live view with Speech output.
+
+Additional information and resources available here: 
 https://docs.microsoft.com/en-us/windows/uwp/machine-learning
 
 ## API Samples
