@@ -13,12 +13,18 @@ using Windows.Storage.Streams;
 using Windows.UI.Core;
 using Windows.Storage.Pickers;
 using Windows.UI.Xaml.Media.Imaging;
+using Windows.UI.Xaml.Navigation;
+using Windows.Media.Capture;
+using Windows.Media.MediaProperties;
+using Windows.System.Threading;
+using System.Threading;
+using Windows.Media.Devices;
+using Windows.Devices.Enumeration;
+using System.Diagnostics;
+using Windows.Media.SpeechSynthesis;
 
 namespace SqueezeNetObjectDetection
 {
-    /// <summary>
-    /// An empty page that can be used on its own or navigated to within a Frame.
-    /// </summary>
     public sealed partial class MainPage : Page
     {
         private const string _kModelFileName = "SqueezeNet.onnx";
@@ -27,18 +33,31 @@ namespace SqueezeNetObjectDetection
         private TensorVariableDescriptorPreview _outputTensorDescription;
         private LearningModelPreview _model = null;
         private List<string> _labels = new List<string>();
-        List<float> _outputVariableList = new List<float>();
+        private List<float> _outputVariableList = new List<float>();
+
+        private MediaCapture _captureManager;
+        private VideoEncodingProperties _videoProperties;
+        private ThreadPoolTimer _frameProcessingTimer;
+        private SemaphoreSlim _frameProcessingSemaphore = new SemaphoreSlim(1);
+        private SpeechSynthesizer _speechSynth;
 
         public MainPage()
         {
-            this.InitializeComponent();
+            InitializeComponent();
+        }
+
+        protected override async void OnNavigatedTo(NavigationEventArgs e)
+        {
+            base.OnNavigatedTo(e);
+
+            await LoadModelAsync();
         }
 
         /// <summary>
         /// Load the label and model files
         /// </summary>
         /// <returns></returns>
-        private async Task LoadModelAsync()
+        private async Task LoadModelAsync(bool isGpu = false)
         {
             await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = $"Loading {_kModelFileName} ... patience ");
 
@@ -67,6 +86,8 @@ namespace SqueezeNetObjectDetection
                 // Load Model
                 var modelFile = await StorageFile.GetFileFromApplicationUriAsync(new Uri($"ms-appx:///Assets/{_kModelFileName}"));
                 _model = await LearningModelPreview.LoadModelFromStorageFileAsync(modelFile);
+                _model.InferencingOptions.ReclaimMemoryAfterEvaluation = true;
+                _model.InferencingOptions.PreferredDeviceKind = isGpu == true ? LearningModelDeviceKindPreview.LearningDeviceGpu : LearningModelDeviceKindPreview.LearningDeviceCpu;
 
                 // Retrieve model input and output variable descriptions (we already know the model takes an image in and outputs a tensor)
                 List<ILearningModelVariableDescriptorPreview> inputFeatures = _model.Description.InputFeatures.ToList();
@@ -79,6 +100,9 @@ namespace SqueezeNetObjectDetection
                 _outputTensorDescription =
                     outputFeatures.FirstOrDefault(feature => feature.ModelFeatureKind == LearningModelFeatureKindPreview.Tensor)
                     as TensorVariableDescriptorPreview;
+
+                await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = $"Loaded {_kModelFileName}. Go ahead and press the camera button.");
+
             }
             catch (Exception ex)
             {
@@ -87,59 +111,169 @@ namespace SqueezeNetObjectDetection
             }
         }
 
-        /// <summary>
-        /// Trigger file picker and image evaluation
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="e"></param>
-        private async void ButtonRun_Click(object sender, RoutedEventArgs e)
+        private async void OnWebCameraButtonClicked(object sender, RoutedEventArgs e)
         {
-            ButtonRun.IsEnabled = false;
-            UIPreviewImage.Source = null;
+            if (_captureManager == null || _captureManager.CameraStreamState != CameraStreamState.Streaming)
+            {
+                await StartWebCameraAsync();
+            }
+            else
+            {
+                await StopWebCameraAsync();
+            }
+        }
+
+        private async void OnDeviceToggleToggled(object sender, RoutedEventArgs e)
+        {
+            await LoadModelAsync(DeviceToggle.IsOn);
+        }
+
+
+        /// <summary>
+        /// Event handler for camera source changes
+        /// </summary>
+        private async Task StartWebCameraAsync()
+        {
             try
             {
-                // Load the model
-                await Task.Run(async () => await LoadModelAsync());
-
-                // Trigger file picker to select an image file
-                FileOpenPicker fileOpenPicker = new FileOpenPicker();
-                fileOpenPicker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
-                fileOpenPicker.FileTypeFilter.Add(".jpg");
-                fileOpenPicker.FileTypeFilter.Add(".png");
-                fileOpenPicker.ViewMode = PickerViewMode.Thumbnail;
-                StorageFile selectedStorageFile = await fileOpenPicker.PickSingleFileAsync();
-
-                SoftwareBitmap softwareBitmap;
-                using (IRandomAccessStream stream = await selectedStorageFile.OpenAsync(FileAccessMode.Read))
+                if (_captureManager == null ||
+                    _captureManager.CameraStreamState == CameraStreamState.Shutdown ||
+                    _captureManager.CameraStreamState == CameraStreamState.NotStreaming)
                 {
-                    // Create the decoder from the stream 
-                    BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
+                    if (_captureManager != null)
+                    {
+                        _captureManager.Dispose();
+                    }
 
-                    // Get the SoftwareBitmap representation of the file in BGRA8 format
-                    softwareBitmap = await decoder.GetSoftwareBitmapAsync();
-                    softwareBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                    // Workaround since my home built-in camera does not work as expected, so have to use my LifeCam
+                    MediaCaptureInitializationSettings settings = new MediaCaptureInitializationSettings();
+                    var allCameras = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture);
+                    var selectedCamera = allCameras.FirstOrDefault(c => c.Name.Contains("LifeCam")) ?? allCameras.FirstOrDefault();
+                    if (selectedCamera != null)
+                    {
+                        settings.VideoDeviceId = selectedCamera.Id;
+                    }
+                    //settings.PreviewMediaDescription = new MediaCaptureVideoProfileMediaDescription()
+
+                    _captureManager = new MediaCapture();
+                    await _captureManager.InitializeAsync(settings);
+                    WebCamCaptureElement.Source = _captureManager;
                 }
 
-                // Display the image
-                SoftwareBitmapSource imageSource = new SoftwareBitmapSource();
-                await imageSource.SetBitmapAsync(softwareBitmap);
-                UIPreviewImage.Source = imageSource;
-
-                // Encapsulate the image within a VideoFrame to be bound and evaluated
-                VideoFrame inputImage = VideoFrame.CreateWithSoftwareBitmap(softwareBitmap);
-
-                await Task.Run(async () =>
+                if (_captureManager.CameraStreamState == CameraStreamState.NotStreaming)
                 {
-                    // Evaluate the image
-                    await EvaluateVideoFrameAsync(inputImage);
-                });
+                    if (_frameProcessingTimer != null)
+                    {
+                        _frameProcessingTimer.Cancel();
+                        _frameProcessingSemaphore.Release();
+                    }
+
+                    TimeSpan timerInterval = TimeSpan.FromMilliseconds(66); //15fps
+                    _frameProcessingTimer = ThreadPoolTimer.CreatePeriodicTimer(new TimerElapsedHandler(ProcessCurrentVideoFrame), timerInterval);
+
+                    _videoProperties = _captureManager.VideoDeviceController.GetMediaStreamProperties(MediaStreamType.VideoPreview) as VideoEncodingProperties;
+
+                    await _captureManager.StartPreviewAsync();
+
+                    WebCamCaptureElement.Visibility = Visibility.Visible;
+                }
             }
             catch (Exception ex)
             {
                 await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = $"error: {ex.Message}");
-                ButtonRun.IsEnabled = true;
             }
         }
+
+        public async Task StopWebCameraAsync()
+        {
+            try
+            {
+                if (_frameProcessingTimer != null)
+                {
+                    _frameProcessingTimer.Cancel();
+                }
+
+                if (_captureManager != null && _captureManager.CameraStreamState != CameraStreamState.Shutdown)
+                {
+                    await _captureManager.StopPreviewAsync();
+                    WebCamCaptureElement.Source = null;
+                    _captureManager.Dispose();
+                    _captureManager = null;
+
+                    WebCamCaptureElement.Visibility = Visibility.Collapsed;
+                }
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = $"error: {ex.Message}");
+            }
+        }
+
+        private async void ProcessCurrentVideoFrame(ThreadPoolTimer timer)
+        {
+            if (_captureManager.CameraStreamState != CameraStreamState.Streaming || !_frameProcessingSemaphore.Wait(0))
+            {
+                return;
+            }
+
+            try
+            {
+                const BitmapPixelFormat InputPixelFormat = BitmapPixelFormat.Bgra8;
+                using (VideoFrame previewFrame = new VideoFrame(InputPixelFormat, (int)_videoProperties.Width, (int)_videoProperties.Height))
+                {
+                    await _captureManager.GetPreviewFrameAsync(previewFrame);
+                    await EvaluateVideoFrameAsync(previewFrame);
+                }
+            }
+            catch (Exception ex)
+            {
+                await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = $"error: {ex.Message}");
+            }
+            finally
+            {
+                _frameProcessingSemaphore.Release();
+            }
+        }
+
+        //private async Task EvaluateImageAsync(Func<Task<StorageFile>> loadImageAction)
+        //{
+        //    try
+        //    {
+        //        // Load the model
+        //        await Task.Run(async () => await LoadModelAsync());
+
+        //        // Load image
+        //        SoftwareBitmap softwareBitmap;
+        //        var selectedStorageFile = await loadImageAction();
+        //        using (IRandomAccessStream stream = await selectedStorageFile.OpenAsync(FileAccessMode.Read))
+        //        {
+        //            // Create the decoder from the stream 
+        //            BitmapDecoder decoder = await BitmapDecoder.CreateAsync(stream);
+
+        //            // Get the SoftwareBitmap representation of the file in BGRA8 format
+        //            softwareBitmap = await decoder.GetSoftwareBitmapAsync();
+        //            softwareBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+        //        }
+
+        //        // Display the image
+        //        SoftwareBitmapSource imageSource = new SoftwareBitmapSource();
+        //        await imageSource.SetBitmapAsync(softwareBitmap);
+
+        //        // Encapsulate the image within a VideoFrame to be bound and evaluated
+        //        VideoFrame inputImage = VideoFrame.CreateWithSoftwareBitmap(softwareBitmap);
+
+        //        await Task.Run(async () =>
+        //        {
+        //            // Evaluate the image
+        //            await EvaluateVideoFrameAsync(inputImage);
+        //        });
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = $"error: {ex.Message}");
+        //    }
+        //}
+
 
         /// <summary>
         /// Evaluate the VideoFrame passed in as arg
@@ -158,15 +292,18 @@ namespace SqueezeNetObjectDetection
                     binding.Bind(_outputTensorDescription.Name, _outputVariableList);
 
                     // Process the frame with the model
+                    var stopwatch = Stopwatch.StartNew();
                     LearningModelEvaluationResultPreview results = await _model.EvaluateAsync(binding, "test");
+                    stopwatch.Stop();
                     List<float> resultProbabilities = results.Outputs[_outputTensorDescription.Name] as List<float>;
 
                     // Find the result of the evaluation in the bound output (the top classes detected with the max confidence)
-                    List<float> topProbabilities = new List<float>() { 0.0f, 0.0f, 0.0f };
-                    List<int> topProbabilityLabelIndexes = new List<int>() { 0, 0, 0 };
+                    const int TopPropsCnt = 5;
+                    var topProbabilities = new float[TopPropsCnt];
+                    var topProbabilityLabelIndexes = new int[TopPropsCnt];
                     for (int i = 0; i < resultProbabilities.Count(); i++)
                     {
-                        for (int j = 0; j < 3; j++)
+                        for (int j = 0; j < TopPropsCnt; j++)
                         {
                             if (resultProbabilities[i] > topProbabilities[j])
                             {
@@ -179,19 +316,47 @@ namespace SqueezeNetObjectDetection
 
                     // Display the result
                     string message = "Predominant objects detected are:";
-                    for (int i = 0; i < 3; i++)
+                    for (int i = 0; i < TopPropsCnt; i++)
                     {
                         message += $"\n{ _labels[topProbabilityLabelIndexes[i]]} with confidence of { topProbabilities[i]}";
                     }
-                    await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = message);
+                    await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, async () =>
+                    {
+                        Duration.Text = string.Format("{0:f1} fps", (1000 / stopwatch.ElapsedMilliseconds));
+                        StatusBlock.Text = message;
+                        await SpeechOutput(_labels[topProbabilityLabelIndexes[0]], topProbabilities[0]);
+                    });
                 }
                 catch (Exception ex)
                 {
                     await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => StatusBlock.Text = $"error: {ex.Message}");
                 }
 
-                await Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () => ButtonRun.IsEnabled = true);
             }
         }
+
+        private async Task SpeechOutput(string label, float probability)
+        {
+            if (!SpeechToggle.IsOn || SpeechMediaElement.CurrentState == Windows.UI.Xaml.Media.MediaElementState.Playing)
+            {
+                return;
+            }
+
+            var text = string.Format("This {0} a {1}", probability > 0.75f ? "is likely" : "might be", label);
+
+            // The object for controlling the speech synthesis engine (voice).
+            if (_speechSynth == null)
+            {
+                _speechSynth = new SpeechSynthesizer();
+            }
+
+            // Generate the audio stream from plain text.
+            SpeechSynthesisStream stream = await _speechSynth.SynthesizeTextToStreamAsync(text);
+
+            // Send the stream to the media object.
+            SpeechMediaElement.SetSource(stream, stream.ContentType);
+            SpeechMediaElement.Play();
+        }
+
     }
 }
