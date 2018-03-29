@@ -324,7 +324,8 @@ namespace SqueezeNetObjectDetection
                     {
                         Duration.Text = $"{1000 / stopwatch.ElapsedMilliseconds,4:f1} fps";
                         StatusBlock.Text = message;
-                        await SpeechOutput(_labels[topProbabilityLabelIndexes[0]], topProbabilities[0]);
+                        var mainLabel = _labels[topProbabilityLabelIndexes[0]].Split(',')[0];
+                        await SpeechOutput(mainLabel, topProbabilities[0]);
                     });
                 }
                 catch (Exception ex)
@@ -342,7 +343,7 @@ namespace SqueezeNetObjectDetection
                 return;
             }
 
-            var text = string.Format("This {0} a {1}", probability > 0.75f ? "is likely" : "might be", label);
+            var text = string.Format("This {0} a {1}", probability > 0.6f ? "is likely" : "might be", label);
 
             // The object for controlling the speech synthesis engine (voice).
             if (_speechSynth == null)
